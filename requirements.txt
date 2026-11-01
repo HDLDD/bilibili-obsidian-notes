@@ -1,0 +1,7 @@
+# Core pipeline
+yt-dlp>=2024.4.9        # download + subtitle fetch
+numpy>=1.24             # audio buffer handling for transcription
+sherpa-onnx>=1.9.0      # local SenseVoice inference (no cloud API, no key)
+
+# Optional: only for one-time model download from ModelScope
+# modelscope>=1.15

@@ -1,0 +1,30 @@
+{
+  "vault": "",
+  "course_dir": "",
+  "bvid": "",
+  "series_url": "",
+  "sensevoice_model_dir": "",
+  "language": "zh",
+  "chunk_seconds": 60,
+  "batch": {
+    "work_dir_pattern": "./<course>-course-work",
+    "sense_threads": 2,
+    "openblas_threads": 1,
+    "sheet_interval_seconds": 15,
+    "lectures_per_agent": "4-6 讲，或按总时长配平到 40-50 分钟视频量",
+    "agent_may_edit": "只允许写自己负责的讲文件夹（含 assets）",
+    "agent_may_not_edit": ["00-本章索引.md", "00-课程索引.md", "其他章节", "工作目录的媒体文件"]
+  },
+  "articles_by_duration": {
+    "<=6min": 1,
+    "6-15min": "2-4",
+    "15-30min": "4-6",
+    ">30min": "6-9"
+  },
+  "images_per_lecture": "3-6（>30 分钟可到 8-10）",
+  "verify": {
+    "fix": "python scripts/fix_course_md.py --vault <vault> --manifest <work>/manifest.json",
+    "check": "python scripts/verify_course.py --vault <vault> --manifest <work>/manifest.json --asr \"<本课热词正则>\" --strict",
+    "indexes": "python scripts/fill_indexes.py --vault <vault> --manifest <work>/manifest.json --date <YYYY-MM-DD>"
+  }
+}

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+
+# local scratch: media work dirs, eval output, per-course config overrides
+*_course-work/
+-course-work/
+_eval_out/
+*.mp4
+*.wav
+*.log
+
+# a real vault is never part of this repo
+vault_backup*/
+*.zip
+.sha256
