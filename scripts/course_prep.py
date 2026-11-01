@@ -35,6 +35,10 @@ FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE", "ffprobe")
 SHEET_INTERVAL = int(os.environ.get("SHEET_INTERVAL", "15"))
 
+# a tail chunk shorter than one utterance decodes to bare punctuation; keeping it
+# would hand the note writers something that looks like speech
+PUNCT_ONLY = re.compile(r"^[\s。，、.！!？?…：:；;·\-—~~]+$")
+
 MODEL_HELP = """SenseVoice model directory not found.
 Set SENSEVOICE_MODEL_DIR to a folder containing model.int8.onnx and tokens.txt, e.g.
   export SENSEVOICE_MODEL_DIR="/path/to/models"
@@ -277,8 +281,10 @@ def transcribe(wav: Path, txt: Path, js: Path, threads: int):
         stream = rec.create_stream()
         stream.accept_waveform(16000, chunk)
         rec.decode_stream(stream)
-        rows.append({"start": i * 60.0, "end": min((i + 1) * 60.0, dur),
-                     "text": stream.result.text.strip()})
+        text = stream.result.text.strip()
+        if PUNCT_ONLY.match(text):
+            continue
+        rows.append({"start": i * 60.0, "end": min((i + 1) * 60.0, dur), "text": text})
         s = int(rows[-1]["start"])
         print(f"[{s // 60:02d}:{s % 60:02d}] {rows[-1]['text']}", flush=True)
     js.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")

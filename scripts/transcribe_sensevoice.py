@@ -9,6 +9,7 @@ import argparse
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -95,6 +96,11 @@ def get_duration(wav_path: Path) -> float:
 def fmt_time(seconds: float) -> str:
     minutes, secs = divmod(int(seconds), 60)
     return f"{minutes:02d}:{secs:02d}"
+
+
+# a chunk shorter than one utterance often decodes to bare punctuation, which then
+# reads like real speech to whatever turns the transcript into notes
+PUNCT_ONLY = re.compile(r"^[\s。，、.！!？?…：:；;·\-—~~]+$")
 
 
 def load_recognizer(models: Path, threads: int):
@@ -185,7 +191,7 @@ def main() -> int:
         start = index * chunk_seconds
         end = min(start + chunk_seconds, duration)
         text = transcribe_chunk(rec, wav_path, start, end)
-        if text:
+        if text and not PUNCT_ONLY.match(text):
             rows.append({"start": start, "end": end, "text": text})
             print(f"[{fmt_time(start)}] {text}", flush=True)
 
