@@ -3,10 +3,13 @@
 """Whole-course driver: metadata -> manifest/skeleton -> acquire -> keyframes.
 
 Subcommands
-  meta      <url> --work DIR                 fetch series metadata -> work/meta.json
+  meta      <url> --work DIR                 series metadata -> work/meta.json
+                                             (Bilibili API, or yt-dlp for other sources;
+                                             --playlist treats the URL as a list)
   manifest  --work DIR --map map.json --vault DIR   build manifest.json + vault skeleton + index stubs
   acquire   --work DIR EP PAGE                download + transcribe + contact sheets (idempotent)
-  keys      --work DIR EP 90,210,...          extract 1080p frames -> work/EP/keyframes
+  keys      --work DIR EP [90,210,...]       extract 1080p frames -> work/EP/keyframes
+  keys      --work DIR EP --from-chapters    one frame per uploader-marked chapter
   status    --work DIR                        which episodes already have video/transcript/sheets
 
 Why idempotent: a long course is acquired once by the orchestrating agent and then read by
@@ -14,7 +17,7 @@ many note-writing subagents. Re-running must never redo finished work, and it mu
 depend on an in-progress file (transcript.txt appears only when a whole pass finishes).
 
 Environment: SENSE_THREADS (default 2) and OPENBLAS_NUM_THREADS (default 1) keep several
-SenseVoice processes from thrashing an 8-core box.
+SenseVoice processes from thrashing an 8-core box. SENSEVOICE_MODEL_DIR points at the model.
 """
 import argparse
 import json
@@ -30,6 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import bili_meta  # noqa: E402
+import source_meta  # noqa: E402
 
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE", "ffprobe")
@@ -85,30 +89,35 @@ def fmt(seconds: int) -> str:
 def cmd_meta(a):
     out = Path(a.work) / "meta.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    final_url = bili_meta.resolve_url(a.url)
-    match = re.search(r"(BV[0-9A-Za-z]+)", final_url)
-    if not match:
-        raise SystemExit(f"could not find a BV id in {final_url}")
-    bvid = match.group(1)
-    info = bili_meta.request_json(
-        f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}")
-    if info.get("code") != 0:
-        raise SystemExit(f"Bilibili API error {info.get('code')}: {info.get('message')}")
-    d = info["data"]
-    data = {
-        "bvid": bvid,
-        "title": d.get("title"),
-        "owner": (d.get("owner") or {}).get("name"),
-        "series_url": f"https://www.bilibili.com/video/{bvid}/",
-        "pages": [{"index": p.get("page"), "part": p.get("part"),
-                   "duration": p.get("duration"), "cid": p.get("cid")}
-                  for p in d.get("pages", [])],
-    }
+    if source_meta.is_bilibili(a.url):
+        final_url = bili_meta.resolve_url(a.url)
+        match = re.search(r"(BV[0-9A-Za-z]+)", final_url)
+        if not match:
+            raise SystemExit(f"could not find a BV id in {final_url}")
+        bvid = match.group(1)
+        info = bili_meta.request_json(
+            f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}")
+        if info.get("code") != 0:
+            raise SystemExit(f"Bilibili API error {info.get('code')}: {info.get('message')}")
+        d = info["data"]
+        data = {
+            "bvid": bvid,
+            "title": d.get("title"),
+            "owner": (d.get("owner") or {}).get("name"),
+            "series_url": f"https://www.bilibili.com/video/{bvid}/",
+            "pages": [{"index": p.get("page"), "part": p.get("part"),
+                       "duration": p.get("duration"), "cid": p.get("cid")}
+                      for p in d.get("pages", [])],
+        }
+    else:
+        data = source_meta.normalize(source_meta.dump_json(a.url, a.playlist), a.url)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    total = sum(p["duration"] for p in data["pages"])
-    print(f"{data['title']}\nUP: {data['owner']}  parts={len(data['pages'])}  total={fmt(total)}")
+    known = [p["duration"] for p in data["pages"] if p.get("duration")]
+    print(f"{data['title']}\n来源: {data.get('source') or 'bilibili'}  UP: {data['owner']}  "
+          f"parts={len(data['pages'])}  total={fmt(sum(known)) if known else '未知'}")
     for p in data["pages"]:
-        print(f"  P{p['index']:>3}  {fmt(p['duration']):>7}  {p['part']}")
+        mark = f"  [{len(p['chapters'])} 个官方章节]" if p.get("chapters") else ""
+        print(f"  P{p['index']:>3}  {source_meta.show(p.get('duration'))}  {p['part']}{mark}")
     print("\nNext: write a chapter map json, then run: manifest --map that.json")
 
 
@@ -146,6 +155,13 @@ def cmd_manifest(a):
     work = Path(a.work)
     meta = json.loads((work / "meta.json").read_text(encoding="utf-8"))
     cmap = json.loads(Path(a.map).read_text(encoding="utf-8"))
+    # a page index in the map that the source doesn't have would otherwise drop that
+    # lesson silently, and a dropped lesson in a 100-lecture course never comes back
+    known = {p["index"] for p in meta["pages"]}
+    phantom = sorted({n for c in cmap for n in c.get("pages", []) if n not in known})
+    if phantom:
+        raise SystemExit(f"章节映射里有 {len(phantom)} 个页号在 meta.json 中不存在：{phantom}；"
+                         f"来源实际有 {len(known)} 页（{sorted(known)[:5]}…）——先修 map，别让某一讲静默消失")
     vault = Path(a.vault)
     rows, seen = [], {}
     for page in meta["pages"]:
@@ -161,17 +177,18 @@ def cmd_manifest(a):
         lesson_title = (ch.get("lesson_titles") or {}).get(str(page["index"])) or \
             default_lesson_title(page["part"])
         folder = f"第{num}章-{topic}" if num != "0" else f"附录-{topic}"
-        folder = f"第{num}章-{topic}" if num != "0" else f"附录-{topic}"
         lesson_folder = f"{slug}-{lesson_title}"
+        dur = page.get("duration") or 0
         rows.append({
             "chapter": num, "chapter_topic": topic, "folder": folder,
             "seq": seq, "slug": slug, "part": page["index"],
             "part_title": clean_part_title(page["part"]), "lesson_title": lesson_title,
             "lesson_folder": lesson_folder,
             "lesson_path": f"{folder}/{lesson_folder}",
-            "duration": fmt(page["duration"]), "duration_s": page["duration"],
+            "duration": fmt(dur), "duration_s": dur,
             "work": f"e{page['index']:02d}",
-            "url": f"https://www.bilibili.com/video/{meta['bvid']}/?p={page['index']}",
+            "url": page.get("url") or
+                   f"https://www.bilibili.com/video/{meta['bvid']}/?p={page['index']}",
         })
         (vault / folder / lesson_folder / "assets").mkdir(parents=True, exist_ok=True)
     (work / "manifest.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2),
@@ -283,7 +300,7 @@ def transcribe(wav: Path, txt: Path, js: Path, threads: int):
         stream.accept_waveform(16000, chunk)
         rec.decode_stream(stream)
         text = stream.result.text.strip()
-        if PUNCT_ONLY.match(text):
+        if not text or PUNCT_ONLY.match(text):
             continue
         rows.append({"start": i * 60.0, "end": min((i + 1) * 60.0, dur), "text": text})
         s = int(rows[-1]["start"])
@@ -306,20 +323,34 @@ def contact_sheets(d: Path, video: Path):
           f" (12 per sheet, {SHEET_INTERVAL}s apart)")
 
 
+def download_for(meta: dict, page: int):
+    """(url, format selector, extra args) for one lesson.
+
+    Bilibili keeps its known format ids and the referer header it checks for;
+    other sources get a generic 1080p-mp4-first ladder.
+    """
+    url = next((p["url"] for p in meta.get("pages", [])
+                if p.get("index") == page and p.get("url")),
+               f"https://www.bilibili.com/video/{meta['bvid']}/?p={page}")
+    if source_meta.is_bilibili(url):
+        return url, "30080+30280/bv*+ba", ["--referer", "https://www.bilibili.com/"]
+    ladder = ("bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba"
+              "/b[height<=1080]/b")
+    return url, ladder, []
+
+
 def cmd_acquire(a):
     work = Path(a.work)
     meta = json.loads((work / "meta.json").read_text(encoding="utf-8"))
-    bvid = meta["bvid"]
     d = work / a.ep
     for sub in ("transcribe", "frames", "keyframes"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     video, wav = d / "video.mp4", d / "transcribe" / "audio_16k.wav"
     txt, js = d / "transcribe" / "transcript.txt", d / "transcribe" / "transcript.json"
     if not video.exists() or video.stat().st_size < 1_000_000:
-        url = f"https://www.bilibili.com/video/{bvid}/?p={a.page}"
-        run([ytdlp(), "--no-playlist", "-f", "30080+30280/bv*+ba", "--merge-output-format",
-             "mp4", "--referer", "https://www.bilibili.com/", "-o", str(video), url],
-            log=d / "download.log")
+        url, fmtsel, extra = download_for(meta, a.page)
+        run([ytdlp(), "--no-playlist", "-f", fmtsel, *extra, "--merge-output-format",
+             "mp4", "-o", str(video), url], log=d / "download.log")
     else:
         print("video exists, skip download")
     if not wav.exists():
@@ -332,13 +363,38 @@ def cmd_acquire(a):
     contact_sheets(d, video)
 
 
+def chapter_starts(work: Path, ep: str, offset: int):
+    """(start_seconds, title) for each uploader-marked chapter of this lesson."""
+    meta = json.loads((work / "meta.json").read_text(encoding="utf-8"))
+    page = int(re.sub(r"\D", "", ep) or "0")
+    p = next((x for x in meta.get("pages", []) if x.get("index") == page), None)
+    if not p:
+        raise SystemExit(f"meta.json 里没有第 {page} 页（ep={ep}）")
+    chs = p.get("chapters") or []
+    if not chs:
+        raise SystemExit("这个视频没有上传者标记的章节（B 站常见）——按 Step 4 用总览图定分节")
+    return [(c["start"] + offset, c["title"]) for c in chs if c.get("start") is not None]
+
+
 def cmd_keys(a):
     d = Path(a.work) / a.ep
-    for t in [x for x in re.split(r"[,\s]+", a.times) if x]:
-        out = d / "keyframes" / f"t{int(float(t))}.png"
-        run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-ss", t,
+    (d / "keyframes").mkdir(parents=True, exist_ok=True)
+    picked = []
+    if a.from_chapters:
+        starts = chapter_starts(Path(a.work), a.ep, a.chapter_offset)
+        (d / "chapters.txt").write_text(
+            "\n".join(f"{fmt(s - a.chapter_offset)}  {t}" for s, t in starts) + "\n",
+            encoding="utf-8")
+        print(f"官方章节 {len(starts)} 个 -> {d / 'chapters.txt'}")
+        picked += starts
+    picked += [(float(t), None) for t in re.split(r"[,\s]+", a.times or "") if t]
+    if not picked:
+        raise SystemExit("give times, or --from-chapters")
+    for start, title in picked:
+        out = d / "keyframes" / f"t{int(start)}.png"
+        run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-ss", str(start),
              "-i", str(d / "video.mp4"), "-frames:v", "1", "-q:v", "2", str(out)])
-        print("saved", out)
+        print("saved", out, f"| {title}" if title else "")
 
 
 def cmd_status(a):
@@ -363,6 +419,8 @@ def main():
     m = sp.add_parser("meta")
     m.add_argument("--url", required=True)
     m.add_argument("--work", required=True)
+    m.add_argument("--playlist", action="store_true",
+                   help="non-Bilibili only: one page per video in the list (shallow metadata)")
     m.set_defaults(func=cmd_meta)
     mf = sp.add_parser("manifest")
     mf.add_argument("--work", required=True)
@@ -378,7 +436,12 @@ def main():
     k = sp.add_parser("keys")
     k.add_argument("--work", required=True)
     k.add_argument("ep")
-    k.add_argument("times")
+    k.add_argument("times", nargs="?", default="",
+                   help="comma/space separated seconds; omit when using --from-chapters")
+    k.add_argument("--from-chapters", action="store_true",
+                   help="one frame per uploader-marked chapter (reads chapters from meta.json)")
+    k.add_argument("--chapter-offset", type=int, default=3,
+                   help="seconds past each chapter start, so the slide has settled")
     k.set_defaults(func=cmd_keys)
     st = sp.add_parser("status")
     st.add_argument("--work", required=True)

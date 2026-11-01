@@ -1,6 +1,6 @@
 ---
 name: bilibili-obsidian-notes
-description: "把 B 站课程/讲座视频整理成 Obsidian 笔记库：短讲一讲一篇，长讲按讲师自己划的小节拆成多篇知识点正文 + 本讲索引 + 扩展笔记，按章归档并回填章索引与课程索引，可选多讲并行批处理；含本地 SenseVoice 转写、1080p 关键帧提取、三重校验（链接/结构/内容复核）与删除前备份。只要用户给出 b23.tv/B站链接并要求「整理成笔记」「拆解这门课」「把这门课都做了」「继续下一讲/下一章」「提取字幕精华」「做某一讲」，或要求把视频课程放进指定的 Obsidian vault，就用本 Skill——整门课的需求不要只按单讲流程做。转写默认走本地 sherpa-onnx SenseVoice，无需联网、不上传音频。"
+description: "把课程/讲座视频整理成 Obsidian 笔记库（B 站为主，也吃任何 yt-dlp 能解析的源，如 YouTube）：短讲一讲一篇，长讲按讲师自己划的小节拆成多篇知识点正文 + 本讲索引 + 扩展笔记，按章归档并回填章索引与课程索引，可选多讲并行批处理；含本地 SenseVoice 转写、1080p 关键帧提取（上传者标了章节时按章节自动取帧）、三重校验（链接/结构/内容复核）与删除前备份。只要用户给出 b23.tv/B站/YouTube 等视频链接并要求「整理成笔记」「拆解这门课」「把这门课都做了」「继续下一讲/下一章」「提取字幕精华」「做某一讲」，或要求把视频课程放进指定的 Obsidian vault，就用本 Skill——整门课的需求不要只按单讲流程做。转写默认走本地 sherpa-onnx SenseVoice，无需联网、不上传音频。"
 compatibility: "Python 3.11 + sherpa_onnx + numpy; yt-dlp, ffmpeg/ffprobe; an Obsidian vault (path set by you). Windows-first: the pitfalls table and encoding notes are from Windows + Git Bash; macOS/Linux work for download/frames/verify, transcription is portable."
 ---
 
@@ -41,7 +41,7 @@ compatibility: "Python 3.11 + sherpa_onnx + numpy; yt-dlp, ffmpeg/ffprobe; an Ob
 
 ## 输入
 
-- 一个 B 站或 `b23.tv` 链接（可以是分 P 链接）
+- 一个 B 站或 `b23.tv` 链接（可以是分 P 链接）；**其它平台**（YouTube 等 yt-dlp 能解析的站点）走 `source_meta.py`
 - 要做的讲次/章节；链接已指向某一 P 时可从 metadata 取
 - 目标 vault（必填；可从 `references/course-config.json` 读默认值）
 
@@ -52,17 +52,30 @@ compatibility: "Python 3.11 + sherpa_onnx + numpy; yt-dlp, ffmpeg/ffprobe; an Ob
 ### Step 1 · 取元数据，确认讲次
 
 ```bash
+# B 站（快速路径，直接走 web 接口，拿全部分 P）
 python scripts/bili_meta.py --url "<链接>" --out "<work>/meta.json"
-# 整门课：python scripts/course_prep.py meta --url "<链接>" --work "<work>"
+python scripts/course_prep.py meta --url "<链接>" --work "<work>"          # 整门课
+# 其它站点（YouTube 等 1700+ 源）
+python scripts/source_meta.py --url "<链接>" --out "<work>/meta.json"
+python scripts/course_prep.py meta --url "<链接>" --work "<work>" --playlist   # 播放列表=多讲
 ```
 
-确认 `bvid`、分 P 序号、`part` 标题、`duration`、`url`。**分 P 序号不一定等于讲次**（一章可能跨多个 P，一个 P 也可能含多讲）：文件名用讲号 `章-序`，链接用分 P。
+两条路都落成同一个 `meta.json`（`bvid` / `title` / `owner` / `series_url` / `pages[]`），后面所有步骤不分来源。
+确认 `part` 标题、`duration`、`url`。**分 P 序号不一定等于讲次**（一章可能跨多个 P，一个 P 也可能含多讲）：
+文件名用讲号 `章-序`，链接用分 P。
+
+> **有 `chapters` 就用它**：非 B 站来源常常带上传者自己标记的章节，`meta.json` 里会存成
+> `pages[].chapters`。这正是"按讲师划的小节"的权威答案——比从总览图推断准，Step 4/5 直接用它，不要再自己重排。
 
 ### Step 2 · 下载 1080P 视频和音轨
 
 ```bash
+# B 站（30080=HEVC 1080P，30280=音频；course_prep 会自动用这套）
 yt-dlp -f "30080+30280/bv*[height<=1080]+ba" --merge-output-format mp4 \
   --referer "https://www.bilibili.com/" -o "<work>/video.mp4" "<selected.url>"
+# 其它站点：先要 1080P mp4，逐级回退（course_prep acquire 按来源自动选，不用手敲）
+yt-dlp -f "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b" \
+  --merge-output-format mp4 -o "<work>/video.mp4" "<selected.url>"
 ffmpeg -y -i "<work>/video.mp4" -vn -ac 1 -ar 16000 -c:a pcm_s16le "<work>/audio_16k.wav"
 ```
 
@@ -98,9 +111,14 @@ bash scripts/frames.sh contact-sheet "<work>/video.mp4" "<work>/frames"     # 5 
 # 长讲用 15 秒/格更省事：SHEET_INTERVAL=15 python scripts/course_prep.py acquire --work "<work>" e07 7
 bash scripts/frames.sh snapshots "<work>/video.mp4" "<work>/keyframes" 35 170 300
 python scripts/course_prep.py keys --work "<work>" e07 "35,170,300"
+python scripts/course_prep.py keys --work "<work>" e07 --from-chapters       # 有官方章节时：一节一帧
 ```
 
 每张总览 4×3=12 格；5 秒档第 N 格 ≈ `(N-1)×5` 秒，15 秒档 ≈ `(N-1)×15` 秒。先看总览定分节，再挑关键时间点截 1080p 原帧。
+
+`--from-chapters` 会按每个章节起点 +3 秒（`--chapter-offset` 可调，避开翻页动画）各截一帧，并把
+`[mm:ss] 小节名` 写进 `<work>/EP/chapters.txt`——这张表就是 Step 5 的拆篇依据，比看总览猜准。
+没有章节时它直接告诉你回退到总览图。
 
 本机**不要给 ffmpeg 加 `drawtext`**（fontconfig 不全，会段错误）；时间靠格子序号换算。
 
@@ -223,6 +241,7 @@ python scripts/verify_course.py --vault "<vault>/<course_dir>" --manifest "<work
 - `scripts/fill_indexes.py`：按磁盘状态回填章索引与课程索引
 - `scripts/renumber_articles.py`：把误用 `00-` 开头的正文重排为 `01..NN`，同步改 frontmatter、wikilink、别名与索引表编号（幂等，`--dry-run` 可先看）
 - `scripts/bili_meta.py`：解析 b23/B站链接，列分 P
+- `scripts/source_meta.py`：其它站点（YouTube 等）归一成同一个 `meta.json`，带 `chapters`；`--from-json` 可离线调试
 - `scripts/transcribe_sensevoice.py`：本地 SenseVoice 分段转写（sherpa-onnx，无需联网）
 - `scripts/frames.sh`：总览拼图与单帧/多帧截图
 - `scripts/check_obsidian_links.py`：轻量链接与锚点校验（单讲够用）

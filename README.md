@@ -1,9 +1,11 @@
 # bilibili-obsidian-notes
 
-把 B 站课程/讲座视频整理成**可复习、可检索、可续做**的 Obsidian 笔记库，并且**能被脚本验证**。
+把课程/讲座视频整理成**可复习、可检索、可续做**的 Obsidian 笔记库，并且**能被脚本验证**。
+以 B 站为主，任何 `yt-dlp` 能解析的源（YouTube 等）都走同一条链路。
 
-English: an agent skill that turns Bilibili lecture series into a structured, verified Obsidian
-knowledge base. Transcription runs fully local (sherpa-onnx SenseVoice) — no audio leaves your
+English: an agent skill that turns lecture videos into a structured, verified Obsidian
+knowledge base. Bilibili-first, but any yt-dlp-supported source works and keeps the same
+pipeline. Transcription runs fully local (sherpa-onnx SenseVoice) — no audio leaves your
 machine. It has been driven end-to-end over 100-lecture courses, so the batch pipeline and its
 failure modes are documented from real runs, not designed on paper.
 
@@ -75,7 +77,7 @@ failure modes are documented from real runs, not designed on paper.
 | `yt-dlp` + Whisper 脚本 | 素材（视频 + srt） | 素材不是笔记：没有知识点切分、没有截图挑选、没有索引与校验 |
 | AI 笔记类 SaaS | 好看的界面 + 云端转写 | 音频要上传；术语纠错你改不动；产出回不到你自己的 vault，也没法续做下一讲 |
 | Obsidian 插件 / 模板 | 展示与书写格式 | 不管采集：下载、转写、截帧、回填、校验全得自己接 |
-| **这个 skill** | 一个能自证的库 + 10 个可单独调用的脚本 | 首次跑通要装环境；长课程受本机转写速度限制 |
+| **这个 skill** | 一个能自证的库 + 11 个可单独调用的脚本 | 首次跑通要装环境；长课程受本机转写速度限制 |
 
 ## 什么时候别用它
 
@@ -145,6 +147,26 @@ bash scripts/frames.sh contact-sheet work/video.mp4 work/frames
 python scripts/verify_course.py --vault "<vault>/<course>" --manifest work/manifest.json --strict
 ```
 
+### 非 B 站来源（YouTube 等 1700+ 站点）
+
+```bash
+python scripts/source_meta.py --url "<视频链接>" --out work/meta.json            # 单个视频
+python scripts/course_prep.py meta --url "<播放列表链接>" --work work --playlist   # 列表 = 多讲
+```
+
+归一化后的 `meta.json` 与 B 站同构，后面 `manifest / acquire / keys / fill_indexes / verify` 一条命令都不用改，
+下载格式与 referer 由 `acquire` 按来源自动选。
+
+多出来的是 `pages[].chapters` —— **上传者自己标的章节**。整个方法都建立在「按讲师划的小节拆篇」上，
+B 站大多没标记，只能从总览图推断；有章节时直接用它，比猜准：
+
+```bash
+python scripts/course_prep.py keys --work work e01 --from-chapters
+# 官方章节 3 个 -> work/e01/chapters.txt
+#   saved work/e01/keyframes/t3.png  | 电场强度的定义
+#   saved work/e01/keyframes/t21.png | 检验电荷的两个要求
+```
+
 ## 试一把，不用联网
 
 仓库带了一个**故意做错**的示例课程库，专门用来验证链接与表格修复：
@@ -181,6 +203,10 @@ python scripts/fix_course_md.py --vault evals/fixtures/skillfix/vault \
   是 Windows 特有的。下载/截帧/校验在 macOS/Linux 上应当可用，但**未经实测**，欢迎报 issue。
 - **B 站登录与画质**：1080P 的 AVC 分片有时需要 cookie，HEVC/AV1 通常免登录；`--cookies-from-browser chrome`
   或降级 720P 就够。请遵守 B 站服务条款与UP 主的版权要求。
+- **非 B 站来源怎么验的**：`source_meta.py` 靠 yt-dlp，理论上覆盖 1700+ 站点，但作者这台机器连不上境外站，
+  所以 YouTube 路径是**离线验证**的——本地 HTTP 上的真实讲课切片走通了 `meta → manifest → acquire → 转写 → 截帧`
+  全链路，章节功能用保存下来的 `yt-dlp -J` 结构加合成 `chapters` 验证。第一次真抓境外站点请你自己跑一遍；
+  失败信息会原样来自 yt-dlp，不是我编的兜底。
 - **不含任何课程正文**：仓库只有方法论 + 脚本 + 空模板。示例库 `evals/fixtures/` 是为测试编造的虚构内容。
 - **ASR 只是草稿**：SenseVoice 会把术语听成同音字。写笔记前必须用幻灯片校正，并为每门课留一张纠错表
   （模板 `references/course-guide-template.md`）。
@@ -198,7 +224,7 @@ references/obsidian-pitfalls.md  表格竖线 / wikilink / CRLF / GBK / 归属�
 references/course-config.json    默认路径（开箱为空）
 references/course-guide-template.md  单门课口径手册 + ASR 纠错表模板
 references/01-video-template.md · 02-extension-template.md  单讲双笔记模板
-scripts/                      10 个脚本，见 SKILL.md 的「参考文件」一节
+scripts/                      11 个脚本，见 SKILL.md 的「参考文件」一节
 evals/evals.json              6 条验收用例（1–4 需联网，5–6 离线）
 evals/fixtures/skillfix/      故意做坏的示例库，离线验证校验器与修复器
 ```
