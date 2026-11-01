@@ -11,22 +11,86 @@ failure modes are documented from real runs, not designed on paper.
 - 每一处产出都对得上磁盘：`verify_course.py` 要求 `HARD=0` 才算交付。
 - 整门课（几十到上百讲）走批处理：主代理串行采集，子代理并行写笔记，索引由脚本回填。
 
-## 它能给你什么
+## 它解决什么问题
+
+一条 45 分钟的 B 站课程视频，常见做法的产出是「一坨转写文本 + 三段总结」。三个月后回来看，这些东西基本没用：
+
+- 术语被 ASR 听成同音字，而且**错了你不知道**（坡印廷→坡形亭、媒质→酶质、时谐场→实写场）；
+- 公式丢了单位和适用条件，矢量方向丢了判据；
+- 想回看那块板书，但没留时间点，只能重刷整条视频；
+- 分不清哪句是老师讲的、哪句是自己补的，复习时把补充内容当成课上原文；
+- 笔记之间没有链接，或者链接在 Obsidian 里点不开、表格渲染成断列；
+- 做到第 20 讲断了，重跑时前面 19 讲又做了一遍，或者不知道该接着做哪一讲；
+- 硬盘里躺着十几个 G 的原片，不敢删、删了又后悔。
+
+这个 skill 把一门课落成**一个库**：章 → 讲 → 多篇知识点正文 + 本讲索引 + 扩展笔记 + 关键截图，
+每一层都有模板，而且**每一处都对得上磁盘**。核心机制是把「质量」变成可执行判据：
+
+> `verify_course.py --strict` 跑到 `HARD=0`、退出码 0，才算这一讲/这门课做完。
+
+## 能给你什么
 
 | 你想要的 | 靠什么 |
 |---|---|
-| 一讲笔记：正文 + 本讲索引 + 扩展笔记 + 关键截图 | `SKILL.md` Step 1–8 |
-| 整门课：章/讲两级结构、可续跑、不重复劳动 | `references/batch-pipeline.md` |
-| 多个子代理并行不互相踩 | `references/subagent-rules.md`（四种真实失败与对策） |
-| 笔记在 Obsidian 里链接/表格真的能渲染 | `scripts/fix_course_md.py` + `scripts/verify_course.py` |
-| 删掉几个 G 的原片之前不丢东西 | `scripts/backup_workdir.py`（备份 → 校验 → 哈希比对，才允许删） |
+| 一讲完整笔记：正文 + 本讲索引 + 考点/易错点/典型题 + 按需截图 | `SKILL.md` Step 1–8 |
+| 整门课（几十到上百讲）可续跑、不重复劳动 | `scripts/course_prep.py`（幂等采集）+ `references/batch-pipeline.md` |
+| 多个子代理并行写笔记不互相覆盖 | `references/subagent-rules.md`（四种真实失败与对策） |
+| 术语不被同音字污染 | Step 3「转写只是草稿」+ 每课一张 ASR 纠错表 + `verify_course.py --asr` 扫残留 |
+| 出处可查，能回到视频那一秒 | 每张图标「视频 mm:ss」；本讲索引给知识点→进度区间；frontmatter 带分 P 链接 |
+| 不把自己补的内容当成课上原文 | 归属四分法（幻灯片 / 板书 / 口述 / 补充），自拟题必须标注 |
+| 链接点不开、表格断列能自动修 | `scripts/fix_course_md.py`（幂等，`--dry-run` 可先看） |
+| 索引统计和磁盘真实情况一致 | `scripts/fill_indexes.py` 按存在的文件回填，禁止手改、禁止 agent 口头汇报 |
+| 删原片之前不丢东西 | `scripts/backup_workdir.py`：备份 → 校验 zip → SHA256 → 比对 vault 哈希，才允许删 |
+| 内容层面的错（公式符号、图注不符、自拟题算错） | Step 8 派**只读**复核代理逐条对转写与总览图，报告必须引用现文原文 |
+
+**实测规模**：单门课最多 100 讲；45 集 / 95 讲 / 14 讲三门课的分工、拆篇判据和坑表都由实跑校准出来的，
+不是纸上设计。瓶颈是本机串行转写（CPU 推理，60 秒一段），不是笔记写作——所以采集放在主代理串行做，
+写笔记才是可以并行的部分。
+
+## 成品长什么样
+
+取自仓库自带的虚构测试库（`evals/fixtures/skillfix/`），格式就是真笔记的格式：
+
+```markdown
+> [!warning] 待核对
+> 视频 10:30 的板书把线电荷密度写成 $\lambda$，幻灯片下一页写的是 $\eta$。两种读法都可能：
+> $\lambda$ 是一维线密度，$\eta$ 在本课程后面被用作面密度。考试口径按教材通例用 $\lambda$
+> 记线密度，「待核对」保留以便回看时确认。
+
+![检验电荷放入电场后受力示意（视频 04:10）](assets/1-1-01_检验电荷示意.png)
+
+> [!question]- 自测
+> 1. 把检验电荷电量放大一倍，测得的 $\vec{E}$ 会不会跟着变？
+>    - 不会。$\vec{F}$ 同比增大，比值不变——前提是放大后的电荷仍能近似当作检验电荷。
+```
+
+「待核对」不是缺陷，是这个库的**可信度来源**：讲师口述与画面矛盾、课件疑似笔误、画面看不清，
+都原样留下并写出两种读法，而不是为了让笔记看起来整洁而猜一个。
+
+## 和别的做法比
+
+| 做法 | 你会得到 | 缺什么 |
+|---|---|---|
+| 把视频/字幕丢给通用 AI 让它总结 | 一段读着顺的摘要 | 结构、出处、可验证性；同音字术语错得很自信 |
+| `yt-dlp` + Whisper 脚本 | 素材（视频 + srt） | 素材不是笔记：没有知识点切分、没有截图挑选、没有索引与校验 |
+| AI 笔记类 SaaS | 好看的界面 + 云端转写 | 音频要上传；术语纠错你改不动；产出回不到你自己的 vault，也没法续做下一讲 |
+| Obsidian 插件 / 模板 | 展示与书写格式 | 不管采集：下载、转写、截帧、回填、校验全得自己接 |
+| **这个 skill** | 一个能自证的库 + 10 个可单独调用的脚本 | 首次跑通要装环境；长课程受本机转写速度限制 |
+
+## 什么时候别用它
+
+- 只是想看**一条**短视频要点——直接丢给 AI 更快，这套流程的价值在「一门课」和「能复习」。
+- 课程本身是英文且术语密集：SenseVoice 中文强、英文弱，`--asr` 热词表要你自己攒。
+- 有官方课件 PDF + 出版教材：那条路直接读 PDF 更准，这个 skill 是为「只有视频」准备的。
+- 需要转载/分发别人的课程内容：本仓库只提供方法论与工具，**不含任何课程正文**，UP 主的版权要求由你自己遵守。
 
 ## 安装
 
 放到你的 agent skills 目录即可，例如：
 
 ```bash
-git clone <this-repo-url> ~/.codex/skills/bilibili-obsidian-notes   # 或 Qoder / Claude Code 的 skills 目录
+git clone https://github.com/HDLDD/bilibili-obsidian-notes ~/.codex/skills/bilibili-obsidian-notes
+# 也可以放进 Qoder / Claude Code / 其它 agent 的 skills 目录：整仓库就是一个 skill
 ```
 
 依赖：
@@ -134,7 +198,7 @@ references/obsidian-pitfalls.md  表格竖线 / wikilink / CRLF / GBK / 归属�
 references/course-config.json    默认路径（开箱为空）
 references/course-guide-template.md  单门课口径手册 + ASR 纠错表模板
 references/01-video-template.md · 02-extension-template.md  单讲双笔记模板
-scripts/                      9 个脚本，见 SKILL.md 的「参考文件」一节
+scripts/                      10 个脚本，见 SKILL.md 的「参考文件」一节
 evals/evals.json              6 条验收用例（1–4 需联网，5–6 离线）
 evals/fixtures/skillfix/      故意做坏的示例库，离线验证校验器与修复器
 ```
