@@ -42,9 +42,11 @@ def read_config(path: Path) -> dict:
         return {}
 
 
-def resolve_model_dir(cli_value: str | None, config: dict) -> Path:
+def resolve_model_dir(cli_value, config: dict) -> Path:
+    # Windows users set env values with setx, which keeps the surrounding quotes
     for raw in (cli_value, os.environ.get("SENSEVOICE_MODEL_DIR"),
                 config.get("sensevoice_model_dir")):
+        raw = (raw or "").strip().strip('"').strip("'")
         if raw:
             d = Path(raw).expanduser()
             if (d / "model.int8.onnx").exists():

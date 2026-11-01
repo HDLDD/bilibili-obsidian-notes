@@ -50,7 +50,8 @@ See README.md » Transcription model."""
 
 
 def model_dir() -> Path:
-    raw = os.environ.get("SENSEVOICE_MODEL_DIR", "")
+    # Windows users set env values with setx, which keeps the surrounding quotes
+    raw = os.environ.get("SENSEVOICE_MODEL_DIR", "").strip().strip('"').strip("'")
     d = Path(raw).expanduser() if raw else None
     if not d or not (d / "model.int8.onnx").exists():
         raise SystemExit(MODEL_HELP)
