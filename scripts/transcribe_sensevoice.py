@@ -102,7 +102,7 @@ def fmt_time(seconds: float) -> str:
 
 # a chunk shorter than one utterance often decodes to bare punctuation, which then
 # reads like real speech to whatever turns the transcript into notes
-PUNCT_ONLY = re.compile(r"^[\s。，、.！!？?…：:；;·\-—~~]+$")
+PUNCT_ONLY = re.compile(r"^[\s。，、.！!？?…：:；;·~—-]+$")
 
 
 def load_recognizer(models: Path, threads: int):

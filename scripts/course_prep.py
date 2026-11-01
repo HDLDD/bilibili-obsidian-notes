@@ -37,7 +37,7 @@ SHEET_INTERVAL = int(os.environ.get("SHEET_INTERVAL", "15"))
 
 # a tail chunk shorter than one utterance decodes to bare punctuation; keeping it
 # would hand the note writers something that looks like speech
-PUNCT_ONLY = re.compile(r"^[\s。，、.！!？?…：:；;·\-—~~]+$")
+PUNCT_ONLY = re.compile(r"^[\s。，、.！!？?…：:；;·~—-]+$")
 
 MODEL_HELP = """SenseVoice model directory not found.
 Set SENSEVOICE_MODEL_DIR to a folder containing model.int8.onnx and tokens.txt, e.g.
