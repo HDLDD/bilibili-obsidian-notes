@@ -79,6 +79,29 @@ failure modes are documented from real runs, not designed on paper.
 | Obsidian 插件 / 模板 | 展示与书写格式 | 不管采集：下载、转写、截帧、回填、校验全得自己接 |
 | **这个 skill** | 一个能自证的库 + 11 个可单独调用的脚本 | 首次跑通要装环境；长课程受本机转写速度限制 |
 
+## 同类开源项目（截至 2026-11）
+
+这个方向很热闹，下面这些都在做「视频 → 笔记」。**先看别人做到哪，再决定要不要用这个**：
+
+| 项目 | ★ | 形态 | 它做到哪 | 差异 |
+|---|---|---|---|---|
+| [ysyecust/lecture-to-notes](https://github.com/ysyecust/lecture-to-notes) | 300 | Claude Code skill | yt-dlp+cookie、Whisper/X-ASR、抽帧、硬字幕 OCR、smart-crop，**有可执行校验**（`verify_notes.py` / `verify_figures.py` / `check_srt_health.py`）和**子代理编排**（`subagent-workflow.md`、采集交 S0、长视频并行撰写） | 产物是单文件 `{title}.md` + 站点/PDF；仓库里没有 Obsidian / vault / wikilink / frontmatter / 索引层，所以不做库级链接与覆盖度门禁 |
+| [mizorewww/course2md](https://github.com/mizorewww/course2md) | 489 | Rust 桌面应用 | YouTube/B 站/本地录屏 → 配图笔记，有 outline 层和 Windows CI | 产品化 GUI 管线，不是给 agent 用的 skill |
+| [Rimagination/bili-note](https://github.com/Rimagination/bili-note) | 348 | agent skill | B 站 → 学习型 Markdown，全字幕 | 只有 `check_environment.py`，不校验产物结构 |
+| [lucky-Luor/bilibili-douyin-notes](https://github.com/lucky-Luor/bilibili-douyin-notes) | 170 | agent skill | B 站/抖音/YouTube/小红书 → 课堂笔记 | 验证是 `docs/verification/*.md` 文档式记录，非可执行门禁；无整课编排 |
+| [KIRVO-REPORTING/video-to-notes](https://github.com/KIRVO-REPORTING/video-to-notes) | 111 | CLI + codex skill | local-first 转写（字幕优先、Whisper 回退） | 重心在转写，不产结构化的库 |
+| [haixiong1997/Bilibili-Obsidian-Clipper](https://github.com/haixiong1997/Bilibili-Obsidian-Clipper) | 602 | 浏览器扩展 | B 站字幕 → Markdown / 一键写进 Obsidian | 只做字幕搬运，无笔记结构、无校验 |
+| [aidenlx/media-extended](https://github.com/aidenlx/media-extended) | 962 | Obsidian 插件 | 库内嵌视频、时间戳联动做笔记 | 采集与结构全靠你 |
+| [JimmySadek/video-fetcher-to-markdown](https://github.com/JimmySadek/video-fetcher-to-markdown) | 519 | 可移植 agent skill | 多平台视频 → Markdown | 单视频粒度，无章/讲/索引四层 |
+
+**所以这个仓库的差异化只在一件事上**：交付物是一个**能自证的 Obsidian 库**——章/讲/正文/索引四层结构 +
+`verify_course.py` 对整个库跑死链、歧义链、缺图、未引用素材、结构完整性、frontmatter 一致、表格列数、覆盖度，
+`HARD=0` 才算做完；索引由 `fill_indexes.py` 按磁盘真实状态回填，不让 agent 手改或口头汇报。
+整门课规模的串行采集 + 并行写作经验写在 `references/subagent-rules.md`，包括四种真实失败。
+
+上面这些结论是按各仓库的文件树和 skill 正文读出来的，不是看名字猜的；但它们在演进，数字也会变，
+以你看到的当下为准。
+
 ## 什么时候别用它
 
 - 只是想看**一条**短视频要点——直接丢给 AI 更快，这套流程的价值在「一门课」和「能复习」。
